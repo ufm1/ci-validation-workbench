@@ -1,0 +1,85 @@
+name: Private source verification (pilot)
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Exact 40-character commit SHA from the configured private source repository"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: private-source-pilot-${{ inputs.source_sha }}
+  cancel-in-progress: true
+
+jobs:
+  validation:
+    if: github.ref == 'refs/heads/main'
+    name: Source validation
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    steps:
+      - name: Validate input and repository configuration
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          PRIVATE_REPO_OWNER: ${{ vars.PRIVATE_REPO_OWNER }}
+          PRIVATE_REPO_NAME: ${{ vars.PRIVATE_REPO_NAME }}
+        run: |
+          set -euo pipefail
+          [[ "${SOURCE_SHA}" =~ ^[0-9a-fA-F]{40}$ ]] || {
+            echo "::error::source_sha must be an exact 40-character commit SHA."
+            exit 2
+          }
+          [[ "${PRIVATE_REPO_OWNER}" =~ ^[A-Za-z0-9-]+$ ]] || {
+            echo "::error::Private source owner configuration is missing or invalid."
+            exit 2
+          }
+          [[ "${PRIVATE_REPO_NAME}" =~ ^[A-Za-z0-9_.-]+$ ]] || {
+            echo "::error::Private source repository configuration is missing or invalid."
+            exit 2
+          }
+
+      - name: Create short-lived read-only checkout token
+        id: private-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.PRIVATE_REPO_APP_CLIENT_ID }}
+          private-key: ${{ secrets.PRIVATE_REPO_APP_PRIVATE_KEY }}
+          owner: ${{ vars.PRIVATE_REPO_OWNER }}
+          repositories: ${{ vars.PRIVATE_REPO_NAME }}
+          permission-contents: read
+
+      - name: Checkout exact private commit
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: ${{ vars.PRIVATE_REPO_OWNER }}/${{ vars.PRIVATE_REPO_NAME }}
+          ref: ${{ inputs.source_sha }}
+          token: ${{ steps.private-token.outputs.token }}
+          path: private-src
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+          clean: true
+
+      - name: Verify checkout and run private validation entry point
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          set -euo pipefail
+          actual_sha="$(git -C private-src rev-parse HEAD)"
+          if [[ "${actual_sha,,}" != "${SOURCE_SHA,,}" ]]; then
+            echo "::error::Checked-out commit does not match requested source SHA."
+            exit 3
+          fi
+          echo "Source revision verified."
+          echo "Compiler: $(gcc --version | head -n 1)"
+          bash private-src/ci/run_public_runner_pilot.sh
+
+      # No cache, artifact upload, release, deployment or source export.
+      # The short-lived installation token is revoked when the job completes.

@@ -1,8 +1,6 @@
 name: Private source verification (pilot)
 
 on:
-  schedule:
-    - cron: "*/15 * * * *"
   workflow_dispatch:
     inputs:
       force:

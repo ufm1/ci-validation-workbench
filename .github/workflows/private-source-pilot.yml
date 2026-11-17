@@ -87,7 +87,6 @@ jobs:
           clean: true
 
       - name: Verify source and run private validation
-        if: steps.guard.outputs.skip != 'true'
         shell: bash
         env:
           SOURCE_SHA: ${{ steps.resolve.outputs.source_sha }}

@@ -1,15 +1,9 @@
 name: Private source verification (pilot)
 
 on:
-  schedule:
-    - cron: '*/15 * * * *'
+  issue_comment:
+    types: [created]
   workflow_dispatch:
-    inputs:
-      force:
-        description: "Run even when this source revision was already attempted"
-        required: false
-        default: false
-        type: boolean
 
 permissions:
   contents: read
@@ -20,7 +14,13 @@ concurrency:
 
 jobs:
   validation:
-    if: github.ref == 'refs/heads/main'
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'issue_comment' &&
+        github.event.issue.number == 1 &&
+        github.event.comment.user.login == 'ufm1' &&
+        github.event.comment.body == '/run-private-validation'))
     name: Source validation
     runs-on: ubuntu-22.04
     timeout-minutes: 60
@@ -28,7 +28,6 @@ jobs:
       contents: read
     outputs:
       source_sha: ${{ steps.resolve.outputs.source_sha }}
-      skip: ${{ steps.guard.outputs.skip }}
     steps:
       - name: Checkout public runner control files
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -74,28 +73,7 @@ jobs:
           }
           echo "source_sha=${source_sha}" >> "${GITHUB_OUTPUT}"
 
-      - name: Skip an already attempted scheduled revision
-        id: guard
-        shell: bash
-        env:
-          SOURCE_SHA: ${{ steps.resolve.outputs.source_sha }}
-          EVENT_NAME: ${{ github.event_name }}
-          FORCE_RUN: ${{ inputs.force || false }}
-        run: |
-          set -euo pipefail
-          last_sha=""
-          if git -C runner-control fetch --quiet origin refs/heads/ci-state; then
-            last_sha="$(git -C runner-control show FETCH_HEAD:.ci-state/private-source-last-attempted-sha.txt 2>/dev/null || true)"
-          fi
-          if [[ "${EVENT_NAME}" == "schedule" && "${FORCE_RUN}" != "true" && "${last_sha}" == "${SOURCE_SHA}" ]]; then
-            echo "skip=true" >> "${GITHUB_OUTPUT}"
-            echo "No new trusted source revision; validation is not repeated."
-          else
-            echo "skip=false" >> "${GITHUB_OUTPUT}"
-          fi
-
       - name: Checkout exact private source revision
-        if: steps.guard.outputs.skip != 'true'
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: ${{ vars.PRIVATE_REPO_OWNER }}/${{ vars.PRIVATE_REPO_NAME }}
@@ -132,7 +110,7 @@ jobs:
       # public-repository token is introduced in the separate job below.
 
   record_attempt:
-    if: ${{ always() && needs.validation.outputs.source_sha != '' && needs.validation.outputs.skip != 'true' }}
+    if: ${{ always() && needs.validation.outputs.source_sha != '' }}
     name: Record attempted source revision
     needs: validation
     runs-on: ubuntu-22.04

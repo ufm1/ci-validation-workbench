@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: private-source-branch-validation
-  cancel-in-progress: false
+  # A fresh owner-triggered validation supersedes a stale or stalled run.
+  cancel-in-progress: true
 
 jobs:
   validation:

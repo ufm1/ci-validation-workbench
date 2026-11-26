@@ -132,8 +132,19 @@ jobs:
         env:
           SOURCE_SHA: ${{ needs.validation.outputs.source_sha }}
           VALIDATION_RESULT: ${{ needs.validation.result }}
+          RUN_ID: ${{ github.run_id }}
+          RUN_NUMBER: ${{ github.run_number }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
+          [[ "${RUN_ID}" =~ ^[0-9]+$ ]]
+          [[ "${RUN_NUMBER}" =~ ^[0-9]+$ ]]
+          [[ "${RUN_ATTEMPT}" =~ ^[0-9]+$ ]]
+          case "${EVENT_NAME}" in
+            issue_comment|workflow_dispatch) ;;
+            *) echo "::error::Unexpected workflow event."; exit 5 ;;
+          esac
           cd runner-control
           if git fetch --quiet origin refs/heads/ci-state; then
             git checkout -B ci-state FETCH_HEAD
@@ -144,9 +155,17 @@ jobs:
           mkdir -p .ci-state
           printf '%s\n' "${SOURCE_SHA}" > .ci-state/private-source-last-attempted-sha.txt
           printf '%s\n' "${VALIDATION_RESULT}" > .ci-state/private-source-last-result.txt
+          printf '%s\n' "${RUN_ID}" > .ci-state/private-source-last-run-id.txt
+          printf '%s\n' "${RUN_NUMBER}" > .ci-state/private-source-last-run-number.txt
+          printf '%s\n' "${RUN_ATTEMPT}" > .ci-state/private-source-last-run-attempt.txt
+          printf '%s\n' "${EVENT_NAME}" > .ci-state/private-source-last-event.txt
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add .ci-state/private-source-last-attempted-sha.txt .ci-state/private-source-last-result.txt
+          git add .ci-state/private-source-last-attempted-sha.txt .ci-state/private-source-last-result.txt \
+            .ci-state/private-source-last-run-id.txt \
+            .ci-state/private-source-last-run-number.txt \
+            .ci-state/private-source-last-run-attempt.txt \
+            .ci-state/private-source-last-event.txt
           if git diff --cached --quiet; then
             echo "Validation state is already current."
           else
